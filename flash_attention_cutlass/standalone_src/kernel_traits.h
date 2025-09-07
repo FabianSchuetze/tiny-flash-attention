@@ -3,6 +3,7 @@
 #include <cutlass/numeric_types.h>
 
 #include "cute/algorithm/copy.hpp"
+#include "cute/arch/copy.hpp"
 #include "cutlass/cutlass.h"
 #include "cutlass/layout/layout.h"
 
@@ -18,8 +19,8 @@ struct Flash_kernel_traits {
     using index_t = uint32_t;
 
     using MMA_Atom_Arch = MMA_Atom<SM80_16x8x16_F32F16F16F32_TN>;
-    using SmemCopyAtom = Copy_Atom<SM75_U32x4_LDSM_N, elem_type>;
-    using SmemCopyAtomTransposed = Copy_Atom<SM75_U16x8_LDSM_T, elem_type>;
+    using SmemCopyAtom = Copy_Atom<DefaultCopy, elem_type>;
+    using SmemCopyAtomTransposed = Copy_Atom<DefaultCopy, elem_type>;
 };
 
 // If Share_Q_K_smem is true, that forces Is_Q_in_regs to be true
@@ -57,32 +58,25 @@ struct Flash_fwd_kernel_traits : public Base {
     using SmemLayoutAtomQO =
         Layout<Shape<_8, Int<kBlockKSmem>>, Stride<Int<kBlockKSmem>, _1>>;
 
-    using SmemLayoutQ = decltype(tile_to_shape(
+    using SmemLayoutQO = decltype(tile_to_shape(
         SmemLayoutAtomQO{}, Shape<Int<kBlockM>, Int<kHeadDim>>{}));
 
     using SmemLayoutKV = decltype(tile_to_shape(
         SmemLayoutAtomQO{}, Shape<Int<kBlockN>, Int<kHeadDim>>{}));
 
-    using SmemLayoutAtomVtransposedNoSwizzle =
+    using SmemLayoutAtomVtransposed =
         Layout<Shape<Int<kBlockKSmem>, Int<kBlockN>>,
                Stride<_1, Int<kBlockKSmem>>>;
-    using SmemLayoutAtomVtransposed = SmemLayoutAtomVtransposedNoSwizzle;
-    using SmemLayoutVtransposed = decltype(tile_to_shape(
+    using SmemLayoutVtransposedNoSwizzle = decltype(tile_to_shape(
         SmemLayoutAtomVtransposed{}, Shape<Int<kHeadDim>, Int<kBlockN>>{}));
-    using SmemLayoutVtransposedNoSwizzle =
-        decltype(tile_to_shape(SmemLayoutAtomVtransposedNoSwizzle{},
-                               Shape<Int<kHeadDim>, Int<kBlockN>>{}));
-    using SmemLayoutO = decltype(tile_to_shape(
-        SmemLayoutAtomQO{}, Shape<Int<kBlockM>, Int<kHeadDim>>{}));
-    using SmemCopyAtomO = Copy_Atom<DefaultCopy, Element>;
     using SmemCopyAtomOaccum = Copy_Atom<DefaultCopy, ElementAccum>;
 
-    static constexpr int kSmemQCount = size(SmemLayoutQ{});
+    static constexpr int kSmemQOCount = size(SmemLayoutQO{});
     static constexpr int kSmemKVCount = size(SmemLayoutKV{}) * 2;
-    static constexpr int kSmemQSize = kSmemQCount * sizeof(Element);
+    static constexpr int kSmemQOSize = kSmemQOCount * sizeof(Element);
     static constexpr int kSmemKVSize = kSmemKVCount * sizeof(Element);
     // TODO:
-    static constexpr int kSmemSize = kSmemQSize + kSmemKVSize;
+    static constexpr int kSmemSize = kSmemQOSize + kSmemKVSize;
 
     static constexpr int kGmemElemsPerLoad =
         sizeof(cute::uint128_t) / sizeof(Element);
