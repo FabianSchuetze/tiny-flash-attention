@@ -48,39 +48,32 @@ struct Flash_fwd_kernel_traits : public Base {
     static constexpr int kBlockKSmem = kHeadDim % 64 == 0 ? 64 : 32;
     static constexpr int kBlockKGmem =
         kHeadDim % 128 == 0 ? 128 : (kHeadDim % 64 == 0 ? 64 : 32);
-    // static constexpr int kSwizzle = kBlockKSmem == 32 ? 2 : 3;
 
     using TiledMma =
         TiledMMA<typename Base::MMA_Atom_Arch,
                  Layout<Shape<Int<kNWarps>, _1, _1>>,  // 4x1x1 or 8x1x1 thread
                  Tile<Int<16 * kNWarps>, _16, _16>>;
 
-    using SmemLayoutAtomQ =
+    using SmemLayoutAtomQO =
         Layout<Shape<_8, Int<kBlockKSmem>>, Stride<Int<kBlockKSmem>, _1>>;
+
     using SmemLayoutQ = decltype(tile_to_shape(
-        SmemLayoutAtomQ{}, Shape<Int<kBlockM>, Int<kHeadDim>>{}));
+        SmemLayoutAtomQO{}, Shape<Int<kBlockM>, Int<kHeadDim>>{}));
 
     using SmemLayoutKV = decltype(tile_to_shape(
-        SmemLayoutAtomQ{}, Shape<Int<kBlockN>, Int<kHeadDim>>{}));
+        SmemLayoutAtomQO{}, Shape<Int<kBlockN>, Int<kHeadDim>>{}));
 
-    // This has to be kBlockN and not 8, otherwise we get wrong results for
-    // d=128
     using SmemLayoutAtomVtransposedNoSwizzle =
         Layout<Shape<Int<kBlockKSmem>, Int<kBlockN>>,
                Stride<_1, Int<kBlockKSmem>>>;
     using SmemLayoutAtomVtransposed = SmemLayoutAtomVtransposedNoSwizzle;
     using SmemLayoutVtransposed = decltype(tile_to_shape(
         SmemLayoutAtomVtransposed{}, Shape<Int<kHeadDim>, Int<kBlockN>>{}));
-    // Maybe the VtransposeNoSwizzle just needs to have the right shape
-    // And the strides don't matter?
     using SmemLayoutVtransposedNoSwizzle =
         decltype(tile_to_shape(SmemLayoutAtomVtransposedNoSwizzle{},
                                Shape<Int<kHeadDim>, Int<kBlockN>>{}));
-
-    using SmemLayoutAtomO =
-        Layout<Shape<Int<8>, Int<kBlockKSmem>>, Stride<Int<kBlockKSmem>, _1>>;
     using SmemLayoutO = decltype(tile_to_shape(
-        SmemLayoutAtomO{}, Shape<Int<kBlockM>, Int<kHeadDim>>{}));
+        SmemLayoutAtomQO{}, Shape<Int<kBlockM>, Int<kHeadDim>>{}));
     using SmemCopyAtomO = Copy_Atom<DefaultCopy, Element>;
     using SmemCopyAtomOaccum = Copy_Atom<DefaultCopy, ElementAccum>;
 
@@ -96,14 +89,6 @@ struct Flash_fwd_kernel_traits : public Base {
     static_assert(kHeadDim % kGmemElemsPerLoad == 0,
                   "kHeadDim must be a multiple of kGmemElemsPerLoad");
 
-    // TODO: review
-
-    // Using kBlockKSmem here is 6-10% faster than kBlockKGmem for d=128 because
-    // of bank conflicts. For example, for d=128, smem is split into 2 "pages",
-    // each page takes care of columns 0-63 and 64-127. If we have 16 threads
-    // per row for gmem read, when we write to smem, thread 0 - 7 will write to
-    // the first page and thread 8 - 15 will write to the second page, to the
-    // same banks.
     static constexpr int kGmemThreadsPerRow = kBlockKSmem / kGmemElemsPerLoad;
     static_assert(kNThreads % kGmemThreadsPerRow == 0,
                   "kNThreads must be a multiple of kGmemThreadsPerRow");
@@ -111,21 +96,7 @@ struct Flash_fwd_kernel_traits : public Base {
         Shape<Int<kNThreads / kGmemThreadsPerRow>, Int<kGmemThreadsPerRow>>,
         Stride<Int<kGmemThreadsPerRow>, _1>>;
 
-    // We use CACHEGLOBAL instead of CACHEALWAYS for both Q and K/V, since we
-    // won't be reading from the same address by the same threadblock. This is
-    // slightly faster.
-    using Gmem_copy_struct = std::conditional_t<
-        Has_cp_async, SM80_CP_ASYNC_CACHEGLOBAL<cute::uint128_t>, DefaultCopy>;
-    using GmemTiledCopyQKV = decltype(make_tiled_copy(
-        Copy_Atom<Gmem_copy_struct, Element>{}, GmemLayoutAtom{},
-        Layout<Shape<_1, _8>>{}));  // Val layout, 8 vals per read
-    using GmemTiledCopyO = decltype(make_tiled_copy(
+    using GmemTiledCopyQKVO = decltype(make_tiled_copy(
         Copy_Atom<DefaultCopy, Element>{}, GmemLayoutAtom{},
-        Layout<Shape<_1, _8>>{}));  // Val layout, 8 vals per store
-    static constexpr int kGmemThreadsPerRowP = kBlockN / kGmemElemsPerLoad;
-    static_assert(kNThreads % kGmemThreadsPerRowP == 0,
-                  "kNThreads must be a multiple of kGmemThreadsPerRowP");
-    using GmemLayoutAtomP = Layout<
-        Shape<Int<kNThreads / kGmemThreadsPerRowP>, Int<kGmemThreadsPerRowP>>,
-        Stride<Int<kGmemThreadsPerRowP>, _1>>;
+        Layout<Shape<_1, _8>>{}));  // Val layout, 8 vals per read
 };
