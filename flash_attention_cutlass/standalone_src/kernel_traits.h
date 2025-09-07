@@ -44,11 +44,9 @@ struct Flash_fwd_kernel_traits : public Base {
     static constexpr int kBlockN = kBlockN_;
     static constexpr int kHeadDim = kHeadDim_;
 
-    // TODO: review
     static_assert(kHeadDim % 32 == 0);
     static constexpr int kBlockKSmem = kHeadDim % 64 == 0 ? 64 : 32;
-    static constexpr int kBlockKGmem =
-        kHeadDim % 128 == 0 ? 128 : (kHeadDim % 64 == 0 ? 64 : 32);
+    static constexpr int kBlockKGmem = (kHeadDim % 128 == 0) ? 128 : kBlockKSmem;
 
     using TiledMma =
         TiledMMA<typename Base::MMA_Atom_Arch,
@@ -69,7 +67,8 @@ struct Flash_fwd_kernel_traits : public Base {
                Stride<_1, Int<kBlockKSmem>>>;
     using SmemLayoutVtransposedNoSwizzle = decltype(tile_to_shape(
         SmemLayoutAtomVtransposed{}, Shape<Int<kHeadDim>, Int<kBlockN>>{}));
-    using SmemCopyAtomOaccum = Copy_Atom<DefaultCopy, ElementAccum>;
+
+    //using SmemCopyAtomOaccum = Copy_Atom<DefaultCopy, ElementAccum>;
 
     static constexpr int kSmemQOCount = size(SmemLayoutQO{});
     static constexpr int kSmemKVCount = size(SmemLayoutKV{}) * 2;
@@ -92,5 +91,6 @@ struct Flash_fwd_kernel_traits : public Base {
 
     using GmemTiledCopyQKVO = decltype(make_tiled_copy(
         Copy_Atom<DefaultCopy, Element>{}, GmemLayoutAtom{},
-        Layout<Shape<_1, _8>>{}));  // Val layout, 8 vals per read
+        Layout<Shape<_1, Int<kGmemElemsPerLoad>>>{}));  // Val layout, 8 vals
+                                                        // per read
 };
